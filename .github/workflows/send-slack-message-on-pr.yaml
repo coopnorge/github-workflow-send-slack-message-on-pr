@@ -103,7 +103,7 @@ jobs:
           path: ${{ env.CACHE_FILE }}
           key: ${{ env.CACHE_KEY }}
 
-  slack-message:
+  create-or-update-message:
     needs: check-existing-message
     runs-on: ubuntu-slim
     if: |
