@@ -1,0 +1,3 @@
+# Ignore Helm chart dependency artifacts
+**/charts/*.tgz
+var/

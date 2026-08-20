@@ -1,0 +1,16 @@
+# nonk8s
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: send-slack-message-on-pr
+  title: Send Slack message on Pull Request
+  description: Reusable Github workflow for sending a message to a designated Slack channel whenever a Pull Request is opened or updated.
+  annotations:
+    github.com/project-slug: coopnorge/send-slack-message-on-pr
+    backstage.io/techdocs-ref: dir:.
+  tags:
+    - github-workflow
+spec:
+  type: library
+  owner: ecom
+  lifecycle: experimental
