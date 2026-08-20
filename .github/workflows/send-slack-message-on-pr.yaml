@@ -142,9 +142,9 @@ jobs:
           PR_IS_OPEN: ${{ github.event.pull_request.state == 'open' }}
           PR_IS_MERGED: ${{ github.event.pull_request.merged }}
           PR_IS_DRAFT: ${{ github.event.pull_request.draft }}
-          IMG_PR_OPEN: "https://gist.github.com/danraven/eda360385a608d440f99397ff3d37565/raw/59f358a55437f741b0ac322e3926fcd9607a5d64/pr_open.png"
-          IMG_PR_MERGED: "https://gist.github.com/danraven/eda360385a608d440f99397ff3d37565/raw/59f358a55437f741b0ac322e3926fcd9607a5d64/pr_merged.png"
-          IMG_PR_CLOSED: "https://gist.github.com/danraven/eda360385a608d440f99397ff3d37565/raw/59f358a55437f741b0ac322e3926fcd9607a5d64/pr_closed.png"
+          IMG_PR_OPEN: "https://github.com/coopnorge/github-workflow-send-slack-message-on-pr/blob/f3732b182981caba20b94ec53cf38d0a9ceb09cc/media/pr_open.png"
+          IMG_PR_MERGED: "https://github.com/coopnorge/github-workflow-send-slack-message-on-pr/blob/f3732b182981caba20b94ec53cf38d0a9ceb09cc/media/pr_merged.png"
+          IMG_PR_CLOSED: "https://github.com/coopnorge/github-workflow-send-slack-message-on-pr/blob/f3732b182981caba20b94ec53cf38d0a9ceb09cc/media/pr_closed.png"
       - name: Update Message
         if: steps.target.outputs.ts != ''
         id: update
