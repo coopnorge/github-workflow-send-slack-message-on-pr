@@ -7,14 +7,15 @@ metadata:
   name: repository-config
 spec:
   description: Reusable Github workflow for sending a message to a designated Slack channel whenever a Pull Request is opened or updated.
+  visibility: public
   actions:
     enableReusableWorkflowsForOrganizationAccess: true
   branches:
     default: main
     protection:
-    - id: main
-      pattern: main
-      requiredStatusChecks:
-        checks:
-        - "validate-ci-results"
-        - "policy-bot: main"
+      - id: main
+        pattern: main
+        requiredStatusChecks:
+          checks:
+            - "validate-ci-results"
+            - "policy-bot: main"
