@@ -1,38 +1,247 @@
 on:
   workflow_call:
     inputs:
-      example-string-input:
-        type: string
-        default: example-string-input
+      channel-id:
+        description: "Slack channel ID to post messages"
         required: true
-        description: |
-          Description of the example string input.
-      example-number-input:
-        type: number
-        default: 42
+        type: string
+      cache-key-prefix:
+        description: "Cache key prefix for saving message identifier (timestamp)"
         required: false
-        description: |
-          Example number input.
-      example-boolean-input:
-        type: boolean
-        default: false
-        required: false
-        description: |
-          Description of the example boolean input.
-
+        default: "SLACK_TS_"
+        type: string
     secrets:
-      example-secret:
-        required: false
-        description: |
-          Example secret.
+      slack-token:
+        description: "Slack bot token"
+        required: true
+
+permissions:
+  contents: read
+  pull-requests: read
+  actions: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CACHE_KEY: "${{ inputs.cache-key-prefix }}${{ github.event.pull_request.number }}"
+  CACHE_FILE: ./.slack_ts.cache
 
 jobs:
-  show-inputs:
-    runs-on: ubuntu-latest
+  check-existing-message:
+    runs-on: ubuntu-slim
+    if: |
+      github.event.pull_request != null
+      && !endsWith(github.actor, '[bot]')
+    outputs:
+      ts: ${{ steps.cache-ts.outputs.ts || steps.recovered-ts.outputs.ts }}
     steps:
-      - name: Display workflow inputs and secrets
+      - name: Retrieve TS from Cache
+        id: cache
+        uses: actions/cache/restore@v6.1.0
+        with:
+          path: ${{ env.CACHE_FILE }}
+          key: ${{ env.CACHE_KEY }}
+          restore-keys: |
+            ${{ env.CACHE_KEY }}
+      - name: Output cached TS
+        id: cache-ts
+        if: steps.cache.outputs.cache-hit == 'true'
+        run: echo "ts=$(cat ${{ env.CACHE_FILE }})" >> $GITHUB_OUTPUT
+      - name: Check Slack bot ID
+        id: bot
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: slackapi/slack-github-action@v4.0.0
+        with:
+          method: auth.test
+          errors: true
+          token: ${{ secrets.slack-token }}
+      - name: Convert PR creation date to UNIX timestamp
+        id: timestamp
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: echo "oldest=$(date -d '${{ github.event.pull_request.created_at }}' +%s)" >> $GITHUB_OUTPUT
+      - name: Retrieve Slack channel history
+        id: history
+        if: steps.bot.outcome != 'skipped'
+        uses: slackapi/slack-github-action@v4.0.0
+        with:
+          method: conversations.history
+          token: ${{ secrets.slack-token }}
+          errors: true
+          payload: |
+            channel: "${{ inputs.channel-id }}"
+            oldest: "${{ steps.timestamp.outputs.oldest }}"
+            limit: 100
+      - name: Extract message TS from history
+        id: recovered-ts
+        if: steps.history.outcome != 'skipped' && steps.history.outputs.ok == 'true'
         run: |
-          echo "String input: ${{ inputs.example-string-input }}"
-          echo "Boolean input: ${{ inputs.example-boolean-input }}"
-          echo "Number input: ${{ inputs.example-number-input }}"
-          echo "Secret: ${{ secrets.example-secret }}"
+          TS=$(echo "$SLACK_RESPONSE" | jq -r --arg bot_id "$BOT_ID" --arg pr_url "$PR_URL" '
+            .messages[]
+            | select(.bot_id == $bot_id)
+            | select(any(.. | strings; contains($pr_url)))
+            | .ts
+          ' | head -n1)
+          if [ -n "$TS" ] && [ "$TS" != "null" ]; then
+            echo "ts=$TS" >> $GITHUB_OUTPUT
+            echo "Found existing message with TS: $TS"
+          else
+            echo "No existing message found"
+          fi
+        env:
+          BOT_ID: ${{ steps.bot.outputs.response && fromJSON(steps.bot.outputs.response).bot_id || '' }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          SLACK_RESPONSE: ${{ steps.history.outputs.response }}
+      - name: Save recovered TS to cache file
+        if: steps.recovered-ts.outputs.ts != ''
+        run: echo "${{ steps.recovered-ts.outputs.ts }}" > ${{ env.CACHE_FILE }}
+      - name: Save recovered TS to cache
+        if: steps.recovered-ts.outputs.ts != ''
+        uses: actions/cache/save@v6.1.0
+        with:
+          path: ${{ env.CACHE_FILE }}
+          key: ${{ env.CACHE_KEY }}
+
+  create-or-update-message:
+    needs: check-existing-message
+    runs-on: ubuntu-slim
+    if: |
+      github.event.pull_request != null
+      && !endsWith(github.actor, '[bot]')
+    steps:
+      - name: Set Message TS
+        id: target
+        if: needs.check-existing-message.outputs.ts != ''
+        run: echo "ts=${{ needs.check-existing-message.outputs.ts }}" >> $GITHUB_OUTPUT
+      - name: Parse Pull Request Details
+        id: pr
+        run: |
+          ESCAPED_TITLE=$(echo "$PR_TITLE" | sed 's/"/\\"/g')
+          echo "title=$ESCAPED_TITLE" >> $GITHUB_OUTPUT
+          if [ "$PR_IS_OPEN" = "true" ]; then
+            echo "image_url=$IMG_PR_OPEN" >> $GITHUB_OUTPUT
+            if [ "$PR_IS_DRAFT" = "true" ]; then
+              echo "pr_status=Draft" >> $GITHUB_OUTPUT
+              echo "PR is Draft"
+            else
+              echo "pr_status=Open" >> $GITHUB_OUTPUT
+              echo "PR is Open"
+            fi
+          elif [ "$PR_IS_MERGED" = "true" ]; then
+            echo "image_url=$IMG_PR_MERGED" >> $GITHUB_OUTPUT
+            echo "pr_status=Merged" >> $GITHUB_OUTPUT
+            echo "PR is Merged"
+          else
+            echo "image_url=$IMG_PR_CLOSED" >> $GITHUB_OUTPUT
+            echo "pr_status=Closed" >> $GITHUB_OUTPUT
+            echo "PR is Closed"
+          fi
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_IS_OPEN: ${{ github.event.pull_request.state == 'open' }}
+          PR_IS_MERGED: ${{ github.event.pull_request.merged }}
+          PR_IS_DRAFT: ${{ github.event.pull_request.draft }}
+          IMG_PR_OPEN: "https://github.com/coopnorge/github-workflow-send-slack-message-on-pr/blob/f3732b182981caba20b94ec53cf38d0a9ceb09cc/media/pr_open.png"
+          IMG_PR_MERGED: "https://github.com/coopnorge/github-workflow-send-slack-message-on-pr/blob/f3732b182981caba20b94ec53cf38d0a9ceb09cc/media/pr_merged.png"
+          IMG_PR_CLOSED: "https://github.com/coopnorge/github-workflow-send-slack-message-on-pr/blob/f3732b182981caba20b94ec53cf38d0a9ceb09cc/media/pr_closed.png"
+      - name: Update Message
+        if: steps.target.outputs.ts != ''
+        id: update
+        uses: slackapi/slack-github-action@v4.0.0
+        with:
+          method: chat.update
+          token: ${{ secrets.slack-token }}
+          payload: |
+            channel: "${{ inputs.channel-id }}"
+            ts: "${{ steps.target.outputs.ts }}"
+            text: "Pull Request ${{ steps.pr.outputs.pr_status }}: ${{ steps.pr.outputs.title }}"
+            blocks:
+              - type: "container"
+                is_collapsible: true
+                default_collapsed: true
+                width: "wide"
+                icon:
+                  type: "image"
+                  alt_text: "Pull Request ${{ steps.pr.outputs.pr_status }}"
+                  image_url: "${{ steps.pr.outputs.image_url }}"
+                rich_text_title:
+                  type: "rich_text"
+                  elements:
+                    - type: "rich_text_section"
+                      elements:
+                        - type: "link"
+                          url: "${{ github.event.pull_request.html_url }}"
+                          text: "${{ steps.pr.outputs.title }}"
+                subtitle:
+                  type: "mrkdwn"
+                  text: "${{ github.event.repository.name }}#${{ github.event.pull_request.number }}"
+                child_blocks:
+                  - type: "divider"
+                  - type: "section"
+                    text:
+                      type: "mrkdwn"
+                      text: "${{ github.event.pull_request.html_url }}"
+                  - type: "context"
+                    elements:
+                      - type: "mrkdwn"
+                        text: "Author: *${{ github.event.pull_request.user.login }}* | Status: *${{ steps.pr.outputs.pr_status }}*"
+      - name: Drop Cache & Dump Response if Update Fails
+        if: steps.target.outputs.ts != '' && steps.update.outputs.ok != 'true'
+        run: |
+          echo "${{ steps.update.outputs.response }}"
+          gh cache delete "${{ env.CACHE_KEY }}" --repo "${{ github.repository }}" || true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Create Message with PR
+        if: steps.target.outputs.ts == '' || steps.update.outputs.ok != 'true'
+        id: create
+        uses: slackapi/slack-github-action@v4.0.0
+        with:
+          method: chat.postMessage
+          token: ${{ secrets.slack-token }}
+          payload: | # should be the same as update, but without the ts
+            channel: "${{ inputs.channel-id }}"
+            text: "Pull Request ${{ steps.pr.outputs.pr_status }}: ${{ steps.pr.outputs.title }}"
+            blocks:
+              - type: "container"
+                is_collapsible: true
+                default_collapsed: true
+                width: "wide"
+                icon:
+                  type: "image"
+                  alt_text: "Pull Request ${{ steps.pr.outputs.pr_status }}"
+                  image_url: "${{ steps.pr.outputs.image_url }}"
+                rich_text_title:
+                  type: "rich_text"
+                  elements:
+                    - type: "rich_text_section"
+                      elements:
+                        - type: "link"
+                          url: "${{ github.event.pull_request.html_url }}"
+                          text: "${{ steps.pr.outputs.title }}"
+                subtitle:
+                  type: "mrkdwn"
+                  text: "${{ github.event.repository.name }}#${{ github.event.pull_request.number }}"
+                child_blocks:
+                  - type: "divider"
+                  - type: "section"
+                    text:
+                      type: "mrkdwn"
+                      text: "${{ github.event.pull_request.html_url }}"
+                  - type: "context"
+                    elements:
+                      - type: "mrkdwn"
+                        text: "Author: *${{ github.event.pull_request.user.login }}* | Status: *${{ steps.pr.outputs.pr_status }}*"
+      - name: Dump Response if Create Fails
+        if: steps.create.outcome != 'skipped' && steps.create.outputs.ok != 'true'
+        run: echo "${{ steps.create.outputs.response }}"
+      - name: Save Message TS
+        if: steps.create.outputs.ok == 'true'
+        run: echo "${{ steps.create.outputs.ts }}" > ${{ env.CACHE_FILE }}
+      - name: Save Cache File
+        if: steps.create.outputs.ok == 'true'
+        uses: actions/cache/save@v6.1.0
+        with:
+          path: ${{ env.CACHE_FILE }}
+          key: ${{ env.CACHE_KEY }}
