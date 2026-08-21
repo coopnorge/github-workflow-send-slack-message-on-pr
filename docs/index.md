@@ -4,7 +4,7 @@ A reusable GitHub workflow that sends a message in a target Slack channel
 whenever a Pull Request is created, and updates said message whenever the state
 of the PR changes.
 
-## Goals
+## How it works
 
 The workflow is split into two jobs: one that checks for an existing message
 (either from cache or the channel history), and one that creates or updates the
@@ -82,7 +82,7 @@ jobs:
   # <some other jobs>
   example-ci:
     name: "Example CI"
-    uses: coopnorge/github-workflow-send-slack-message-on-pr/.github/workflows/send-slack-message-on-pr.yaml@v1.0.0
+    uses: coopnorge/github-workflow-send-slack-message-on-pr/.github/workflows/send-slack-message-on-pr.yaml@v1
     with:
       channel-id: YOUR-SLACK-CHANNEL-ID
       cache-key-prefix: CUSTOM-CACHE-KEY-PREFIX-
