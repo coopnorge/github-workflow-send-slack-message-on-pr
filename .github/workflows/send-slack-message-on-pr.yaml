@@ -33,7 +33,7 @@ jobs:
     runs-on: ubuntu-slim
     if: |
       github.event.pull_request != null
-      && !endsWith(github.actor, '[bot]')
+      && !endsWith(github.event.pull_request.user.login, '[bot]')
     outputs:
       ts: ${{ steps.cache-ts.outputs.ts || steps.recovered-ts.outputs.ts }}
     steps:
@@ -108,7 +108,7 @@ jobs:
     runs-on: ubuntu-slim
     if: |
       github.event.pull_request != null
-      && !endsWith(github.actor, '[bot]')
+      && !endsWith(github.event.pull_request.user.login, '[bot]')
     steps:
       - name: Set Message TS
         id: target
