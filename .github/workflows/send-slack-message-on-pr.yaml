@@ -59,43 +59,53 @@ jobs:
           token: ${{ secrets.slack-token }}
       - name: Convert PR creation date to UNIX timestamp
         id: timestamp
-        if: steps.cache.outputs.cache-hit != 'true'
-        run: echo "oldest=$(date -d '${{ github.event.pull_request.created_at }}' +%s)" >> $GITHUB_OUTPUT
-      - name: Retrieve Slack channel history
-        id: history
         if: steps.bot.outcome != 'skipped'
-        uses: slackapi/slack-github-action@v4.0.0
-        with:
-          method: conversations.history
-          token: ${{ secrets.slack-token }}
-          errors: true
-          payload: |
-            channel: "${{ inputs.channel-id }}"
-            oldest: "${{ steps.timestamp.outputs.oldest }}"
-            limit: 100
-      - name: Extract message TS from history
+        run: echo "oldest=$(date -d '${{ github.event.pull_request.created_at }}' +%s)" >> $GITHUB_OUTPUT
+      - name: Retrieve Slack channel history and filter out message TS
         id: recovered-ts
-        if: steps.history.outcome != 'skipped' && steps.history.outputs.ok == 'true'
+        if: steps.bot.outcome != 'skipped'
+        # This was originally two steps, one calling the Slack API workflow to
+        # fetch conversations.history, and one to use jq to filter the message
+        # out from its output. However the output can be so large it can break
+        # the argument list in bash, so we need to do both in the same step by
+        # "manually" calling the API endpoint and saving its response to a
+        # file.
         run: |
-          TS=$(echo "$SLACK_RESPONSE" | jq -r --arg bot_id "$BOT_ID" --arg pr_url "$PR_URL" '
+          HTTP_STATUS=$(curl -sS -X POST -w '%{http_code}' -o "$RESPONSE_FILE" \
+            https://slack.com/api/conversations.history \
+            -H "Authorization: Bearer $SLACK_TOKEN" \
+            --data-urlencode "channel=$CHANNEL_ID" \
+            --data-urlencode "oldest=$OLDEST" \
+            --data-urlencode "limit=100")
+
+          OK=$(jq -r '.ok' "$RESPONSE_FILE")
+          if [ "$HTTP_STATUS" != "200" ] || [ "$OK" != "true" ]; then
+            echo "Slack API call failed (HTTP $HTTP_STATUS)"
+            cat "$RESPONSE_FILE"
+            exit 1
+          fi
+
+          TS=$(jq -r --arg bot_id "$BOT_ID" --arg pr_url "$PR_URL" '
             .messages[]
             | select(.bot_id == $bot_id)
             | select(any(.. | strings; contains($pr_url)))
             | .ts
-          ' | head -n1)
+          ' "$RESPONSE_FILE" | head -n1)
+
           if [ -n "$TS" ] && [ "$TS" != "null" ]; then
-            echo "ts=$TS" >> $GITHUB_OUTPUT
+            echo "ts=$TS" >> "$GITHUB_OUTPUT"
+            echo "$TS" > "$CACHE_FILE"
             echo "Found existing message with TS: $TS"
           else
             echo "No existing message found"
           fi
         env:
+          SLACK_TOKEN: ${{ secrets.slack-token }}
+          CHANNEL_ID: ${{ inputs.channel-id }}
+          OLDEST: ${{ steps.timestamp.outputs.oldest }}
           BOT_ID: ${{ steps.bot.outputs.response && fromJSON(steps.bot.outputs.response).bot_id || '' }}
           PR_URL: ${{ github.event.pull_request.html_url }}
-          SLACK_RESPONSE: ${{ steps.history.outputs.response }}
-      - name: Save recovered TS to cache file
-        if: steps.recovered-ts.outputs.ts != ''
-        run: echo "${{ steps.recovered-ts.outputs.ts }}" > ${{ env.CACHE_FILE }}
+          RESPONSE_FILE: ${{ runner.temp }}/slack_channel_history.json
       - name: Save recovered TS to cache
         if: steps.recovered-ts.outputs.ts != ''
         uses: actions/cache/save@v6.1.0
@@ -200,6 +210,7 @@ jobs:
         with:
           method: chat.postMessage
           token: ${{ secrets.slack-token }}
+          errors: true
           payload: | # should be the same as update, but without the ts
             channel: "${{ inputs.channel-id }}"
             text: "Pull Request ${{ steps.pr.outputs.pr_status }}: ${{ steps.pr.outputs.title }}"
@@ -233,9 +244,6 @@ jobs:
                     elements:
                       - type: "mrkdwn"
                         text: "Author: *${{ github.event.pull_request.user.login }}* | Status: *${{ steps.pr.outputs.pr_status }}*"
-      - name: Dump Response if Create Fails
-        if: steps.create.outcome != 'skipped' && steps.create.outputs.ok != 'true'
-        run: echo "${{ steps.create.outputs.response }}"
       - name: Save Message TS
         if: steps.create.outputs.ok == 'true'
         run: echo "${{ steps.create.outputs.ts }}" > ${{ env.CACHE_FILE }}
