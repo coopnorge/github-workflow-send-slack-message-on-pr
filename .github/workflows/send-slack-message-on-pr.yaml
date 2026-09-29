@@ -39,7 +39,7 @@ jobs:
     steps:
       - name: Retrieve TS from Cache
         id: cache
-        uses: actions/cache/restore@v6.1.0
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ env.CACHE_FILE }}
           key: ${{ env.CACHE_KEY }}
@@ -108,7 +108,7 @@ jobs:
           RESPONSE_FILE: ${{ runner.temp }}/slack_channel_history.json
       - name: Save recovered TS to cache
         if: steps.recovered-ts.outputs.ts != ''
-        uses: actions/cache/save@v6.1.0
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ env.CACHE_FILE }}
           key: ${{ env.CACHE_KEY }}
@@ -249,7 +249,7 @@ jobs:
         run: echo "${{ steps.create.outputs.ts }}" > ${{ env.CACHE_FILE }}
       - name: Save Cache File
         if: steps.create.outputs.ok == 'true'
-        uses: actions/cache/save@v6.1.0
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ env.CACHE_FILE }}
           key: ${{ env.CACHE_KEY }}
